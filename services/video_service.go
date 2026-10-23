@@ -86,8 +86,6 @@ const (
 	emptyFeedCacheTTL = 10 * time.Second
 	videoCachePrefix  = "video:"
 	videoObjectTTL    = 30 * time.Second
-	hotRankKey        = "hot:videos"
-	hotRankTTL        = 7 * 24 * time.Hour
 )
 
 // cacheTTLWithJitter 给基础过期时间加随机抖动，避免同一批 key 同时失效
@@ -318,9 +316,8 @@ func LikeVideo(userID, videoID uint) error {
 	if duplicated {
 		return errors.New("不能重复点赞")
 	}
-	rdb.ZIncrBy(ctx, hotRankKey, 1, strconv.Itoa(int(videoID))).Err()
-	// 热度榜按活跃度续期：七天没有点赞就整体过期，避免长期堆着僵尸条目
-	rdb.Expire(ctx, hotRankKey, hotRankTTL)
+	// 热度按分钟分桶，桶自带过期，滑出一小时窗口后自然消失
+	hotIncr(videoID, 1)
 	// 点赞数变了，让这个视频的对象缓存失效
 	rdb.Del(ctx, videoCacheKey(videoID))
 	return nil
@@ -336,13 +333,8 @@ func UnlikeVideo(userID, videoID uint) error {
 		return errors.New("还没有点赞")
 	}
 
-	member := strconv.Itoa(int(videoID))
-	score, err := rdb.ZIncrBy(ctx, hotRankKey, -1, member).Result()
-	if err == nil && score <= 0 {
-		// 热度归零就从榜上摘掉，避免脏成员长期占位
-		rdb.ZRem(ctx, hotRankKey, member)
-	}
-	rdb.Expire(ctx, hotRankKey, hotRankTTL)
+	// 取消点赞在同一个分钟桶里减分，聚合时只取正分，所以不需要逐条清理成员
+	hotIncr(videoID, -1)
 	// 点赞数变了，让这个视频的对象缓存失效
 	rdb.Del(ctx, videoCacheKey(videoID))
 	return nil
@@ -379,33 +371,4 @@ func LikedVideos(userID, cursor uint, limit int) (feedPage, error) {
 		}
 	}
 	return feedPage{Videos: ordered, NextCursor: next}, nil
-}
-
-// HotVideos 热度 Top10
-func HotVideos() ([]models.Video, error) {
-	ids, _ := rdb.ZRevRange(ctx, hotRankKey, 0, 9).Result()
-	if len(ids) == 0 {
-		return []models.Video{}, nil
-	}
-	var videoIDs []uint
-	for _, id := range ids {
-		n, _ := strconv.ParseUint(id, 10, 64)
-		videoIDs = append(videoIDs, uint(n))
-	}
-	videos, err := repos.FindVideosByIDs(videoIDs)
-	if err != nil {
-		return nil, err
-	}
-	// 按热度顺序重排
-	videoMap := map[uint]models.Video{}
-	for _, v := range videos {
-		videoMap[v.ID] = v
-	}
-	result := make([]models.Video, 0, len(videoIDs))
-	for _, id := range videoIDs {
-		if v, ok := videoMap[id]; ok {
-			result = append(result, v)
-		}
-	}
-	return result, nil
 }

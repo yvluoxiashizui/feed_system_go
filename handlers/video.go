@@ -137,9 +137,12 @@ func ListMyLikedVideos(c *gin.Context) {
 	c.JSON(200, page)
 }
 
-// HotVideos 热榜 Top10
+// HotVideos 热榜，最近一小时热度排序，深度有上限
 func HotVideos(c *gin.Context) {
-	videos, err := services.HotVideos()
+	limit := parseLimit(c.DefaultQuery("limit", strconv.Itoa(defaultFeedLimit)))
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+
+	videos, err := services.HotRank(offset, limit)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "获取失败"})
 		return
