@@ -82,6 +82,7 @@ func PublishVideo(userID uint, title, playURL string) (*models.Video, error) {
 const (
 	feedWindowSize    = 500
 	feedWindowKey     = "feed:recent:ids"
+	feedWindowLockKey = "feed:lock:window"
 	feedCacheTTL      = 30 * time.Second
 	emptyFeedCacheTTL = 10 * time.Second
 	videoCachePrefix  = "video:"
@@ -164,7 +165,8 @@ func feedPageFromWindow(ids []uint, cursor uint, limit int) (feedPage, bool) {
 	return feedPage{Videos: ordered, NextCursor: int(pageIDs[len(pageIDs)-1])}, true
 }
 
-// recentFeedIDs 取最近 feedWindowSize 条视频 id（降序），带缓存与单飞
+// recentFeedIDs 取最近 feedWindowSize 条视频 id（降序）。
+// 回源做两层收敛：单飞挡同一实例内的并发，分布式锁挡多实例之间的并发。
 func recentFeedIDs() ([]uint, error) {
 	if ids, ok := readFeedWindow(); ok {
 		return ids, nil
@@ -175,17 +177,40 @@ func recentFeedIDs() ([]uint, error) {
 		if ids, ok := readFeedWindow(); ok {
 			return ids, nil
 		}
+		return rebuildFeedWindow()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return v.([]uint), nil
+}
+
+// rebuildFeedWindow 回源重建窗口。抢到锁的实例负责回填缓存，
+// 没抢到的短暂等缓存出现，等不到就直接查库且不写缓存——
+// 避免多个实例同时回源后又同时写，把击穿从「一起查库」变成「一起写缓存」。
+func rebuildFeedWindow() ([]uint, error) {
+	release, ok := tryLock(feedWindowLockKey)
+	if ok {
+		defer release()
+
 		ids, err := repos.ListRecentVideoIDs(feedWindowSize)
 		if err != nil {
 			return nil, err
 		}
 		writeFeedWindow(ids)
 		return ids, nil
-	})
-	if err != nil {
-		return nil, err
 	}
-	return v.([]uint), nil
+
+	deadline := time.Now().Add(lockWaitTotal)
+	for time.Now().Before(deadline) {
+		time.Sleep(lockPollInterval)
+		if ids, ok := readFeedWindow(); ok {
+			return ids, nil
+		}
+	}
+
+	// 持锁者迟迟没写回，退化成直查：不写缓存，避免多实例重复写
+	return repos.ListRecentVideoIDs(feedWindowSize)
 }
 
 // loadFeedPage 直接查库，并算出下一页游标（窗口覆盖不到时回退走这里）
