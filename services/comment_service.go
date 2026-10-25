@@ -33,6 +33,9 @@ func PublishComment(userID, videoID uint, content string) (*models.Comment, erro
 	if err := repos.CreateComment(c); err != nil {
 		return nil, err
 	}
+
+	// 评论和点赞一样计入热度：有争议的视频往往评论多、点赞少，只看点赞会漏掉这类内容
+	hotIncr(videoID, 1)
 	return c, nil
 }
 
