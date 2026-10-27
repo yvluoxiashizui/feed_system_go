@@ -66,6 +66,12 @@ go run ./cmd/worker
 | `FEED_FANOUT_THRESHOLD` | `1000` | 粉丝数超过该值的作者走拉取 |
 | `FEED_CACHE_DISABLED` | 未设置 | 设为 `1` 时关闭 Feed 缓存 |
 | `FEED_ACCESS_LOG` | 未设置 | 设为 `0` 时关闭访问日志 |
+| `FEED_UPLOAD_DIR` | `uploads` | 本地磁盘存储目录（未配对象存储时生效） |
+| `FEED_S3_ENDPOINT` | 空 | S3 兼容地址，如 `http://127.0.0.1:9000`；配了就改用对象存储 |
+| `FEED_S3_ACCESS_KEY` | 空 | 对象存储的 access key |
+| `FEED_S3_SECRET_KEY` | 空 | 对象存储的 secret key |
+| `FEED_S3_BUCKET` | `feed` | 桶名，不存在会自动创建并设为只读公开 |
+| `FEED_S3_PUBLIC_URL` | 与 endpoint 相同 | 对外访问前缀，走 CDN 或反向代理时填它 |
 
 ## 接口清单
 

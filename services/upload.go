@@ -33,14 +33,9 @@ func UploadDir() string {
 	return "uploads"
 }
 
-// SaveVideo 保存单个视频文件，返回可访问的相对路径。
-// 小文件走这里直接落盘；大文件走分片那套接口。
+// SaveVideo 保存单个视频文件，返回可访问地址。
+// 走存储层：配了对象存储就传对象存储，否则落本地磁盘，由 /media 提供访问。
 func SaveVideo(file *multipart.FileHeader) (string, error) {
-	dir := UploadDir()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
-
 	name, err := randomFileName(filepath.Ext(file.Filename))
 	if err != nil {
 		return "", err
@@ -52,17 +47,7 @@ func SaveVideo(file *multipart.FileHeader) (string, error) {
 	}
 	defer src.Close()
 
-	dst, err := os.Create(filepath.Join(dir, name))
-	if err != nil {
-		return "", err
-	}
-	defer dst.Close()
-
-	if _, err := dst.ReadFrom(src); err != nil {
-		os.Remove(filepath.Join(dir, name))
-		return "", err
-	}
-	return "/media/" + name, nil
+	return Storage().Put(ctx, name, src, file.Size, file.Header.Get("Content-Type"))
 }
 
 // randomFileName 生成随机文件名，保留扩展名，避免重名和路径注入
@@ -157,12 +142,12 @@ func CompleteUpload(uploadID string, total int, ext string) (string, error) {
 		ext = ".mp4"
 	}
 
-	finalPath := filepath.Join(UploadDir(), uploadID+ext)
-	playURL := "/media/" + uploadID + ext
 
-	// 已经合并过：直接返回同一个地址，天然幂等
-	if _, err := os.Stat(finalPath); err == nil {
-		return playURL, nil
+	// 已经合并过：直接返回同一个地址，天然幂等。
+	// 记在 Redis 里而不是查文件，这样换对象存储之后行为一致。
+	doneKey := "upload:" + uploadID + ":done"
+	if doneURL, err := rdb.Get(ctx, doneKey).Result(); err == nil && doneURL != "" {
+		return doneURL, nil
 	}
 
 	locked, err := rdb.SetNX(ctx, uploadLockKey(uploadID), "1", uploadLockTTL).Result()
@@ -182,34 +167,47 @@ func CompleteUpload(uploadID string, total int, ext string) (string, error) {
 		return "", fmt.Errorf("分片不全：已传 %d，总共 %d", len(indexes), total)
 	}
 
-	if err := os.MkdirAll(UploadDir(), 0o755); err != nil {
-		return "", err
-	}
-	dst, err := os.Create(finalPath)
+	// 先在本机拼一个临时文件，再整体交给存储层：
+	// 对象存储不支持「按顺序追加」，只能整份上传
+	tmp, err := os.CreateTemp("", "upload-*.mp4")
 	if err != nil {
 		return "", err
 	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	var size int64
 	for i := 0; i < total; i++ {
 		src, err := os.Open(filepath.Join(uploadChunkDir(uploadID), strconv.Itoa(i)))
 		if err != nil {
-			dst.Close()
-			os.Remove(finalPath)
+			tmp.Close()
 			return "", fmt.Errorf("缺少第 %d 片", i)
 		}
-		_, copyErr := io.Copy(dst, src)
+		n, copyErr := io.Copy(tmp, src)
 		src.Close()
 		if copyErr != nil {
-			dst.Close()
-			os.Remove(finalPath)
+			tmp.Close()
 			return "", copyErr
 		}
+		size += n
 	}
-	if err := dst.Close(); err != nil {
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+
+	merged, err := os.Open(tmpPath)
+	if err != nil {
+		return "", err
+	}
+	defer merged.Close()
+	playURL, err := Storage().Put(ctx, uploadID+ext, merged, size, "video/"+ext[1:])
+	if err != nil {
 		return "", err
 	}
 
 	// 合并成功后清掉分片和记账，失败也删：留着只会占空间
 	os.RemoveAll(uploadChunkDir(uploadID))
 	rdb.Del(ctx, uploadedChunksKey(uploadID))
+	rdb.Set(ctx, doneKey, playURL, uploadChunkTTL)
 	return playURL, nil
 }

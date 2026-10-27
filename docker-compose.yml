@@ -76,5 +76,21 @@ services:
       rabbitmq:
         condition: service_healthy
 
+  # 对象存储：需要时用 docker compose --profile minio up 单独带起来，
+  # 不给 FEED_S3_ENDPOINT 时视频仍落本地磁盘，默认启动不依赖它
+  minio:
+    image: minio/minio:latest
+    profiles: ["minio"]
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: feed
+      MINIO_ROOT_PASSWORD: feed123456
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
 volumes:
+  minio-data:
   mysql-data:

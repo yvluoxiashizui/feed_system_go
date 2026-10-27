@@ -64,6 +64,11 @@ func main() {
 	r.POST("/comment/publish", handlers.Auth, handlers.PublishComment)
 	r.GET("/comment/list", handlers.ListComments)
 
+	// 存储层：配了对象存储就走对象存储，否则落本地磁盘
+	if err := services.InitStorage(); err != nil {
+		log.Println("对象存储初始化失败，退回本地磁盘:", err)
+	}
+
 	// 演示页与上传的视频文件；上传目录可用 FEED_UPLOAD_DIR 覆盖
 	uploadDir := services.UploadDir()
 	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
