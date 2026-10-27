@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"math/rand"
 	"os"
 	"strconv"
@@ -71,7 +72,9 @@ func PublishVideo(userID uint, title, playURL string) (*models.Video, error) {
 	// 写扩散移出主请求：投递给消费者异步执行；MQ 不可用时退回同步扇出，
 	// 保证发布接口在任何情况下都能完成，代价只是接口耗时变长
 	if err := publishFanout(author.ID, v.ID); err != nil {
-		fanoutVideo(author.ID, v.ID)
+		if err := fanoutVideo(author.ID, v.ID); err != nil {
+			log.Println("同步扇出失败，视频已发布但未写入粉丝时间线:", err)
+		}
 	}
 
 	return v, nil

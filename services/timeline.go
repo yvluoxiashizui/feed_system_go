@@ -33,20 +33,27 @@ func timelineKey(userID uint) string {
 	return "timeline:" + strconv.Itoa(int(userID))
 }
 
-// fanoutVideo 发布时把视频写进粉丝的时间线；粉丝数超过阈值的作者跳过
-func fanoutVideo(authorID, videoID uint) {
+// fanoutVideo 发布时把视频写进粉丝的时间线；粉丝数超过阈值的作者跳过。
+// 返回错误表示这次扇出没有完成，调用方据此重试，而不是当作已完成。
+func fanoutVideo(authorID, videoID uint) error {
 	if !cacheEnabled() {
-		return
+		return nil
 	}
 	count, err := repos.CountFollowers(authorID)
-	if err != nil || count == 0 || int(count) > fanoutThreshold() {
-		return
+	if err != nil {
+		return err
+	}
+	if count == 0 || int(count) > fanoutThreshold() {
+		return nil
 	}
 	followerIDs, err := repos.FindFollowerIDs(authorID)
-	if err != nil || len(followerIDs) == 0 {
-		return
+	if err != nil {
+		return err
 	}
-	pushToTimelines(followerIDs, []uint{videoID})
+	if len(followerIDs) == 0 {
+		return nil
+	}
+	return pushToTimelines(followerIDs, []uint{videoID})
 }
 
 // backfillTimeline 关注时把对方最近的视频写进我的时间线，避免只看到关注之后的内容
@@ -82,7 +89,7 @@ func clearAuthorFromTimeline(followerID, authorID uint) {
 }
 
 // pushToTimelines 把一批视频写进一批用户的时间线，分值用视频 id，天然按时间有序
-func pushToTimelines(userIDs, videoIDs []uint) {
+func pushToTimelines(userIDs, videoIDs []uint) error {
 	pipe := rdb.Pipeline()
 	for _, uid := range userIDs {
 		key := timelineKey(uid)
@@ -91,7 +98,8 @@ func pushToTimelines(userIDs, videoIDs []uint) {
 		}
 		pipe.Expire(ctx, key, timelineTTL)
 	}
-	_, _ = pipe.Exec(ctx)
+	_, err := pipe.Exec(ctx)
+	return err
 }
 
 // timelinePage 从时间线按游标取一页视频 id（降序）
