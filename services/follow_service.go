@@ -2,6 +2,7 @@ package services
 
 import (
 	"errors"
+	"sync"
 
 	"feed/models"
 	"feed/repos"
@@ -48,24 +49,45 @@ func IsFollowing(followerID, vloggerID uint) (bool, error) {
 
 // FollowingFeed 关注流：推来的内容读时间线，大 V 的内容实时聚合，两路归并后分页
 func FollowingFeed(followerID, cursor uint, limit int) (feedPage, error) {
-	following, err := repos.FindFollowingVloggerIDs(followerID)
-	if err != nil {
-		return feedPage{}, err
+	// 第一段并行：关注关系（含每个作者的粉丝数）与时间线互不依赖，一起发出去
+	var (
+		following  []uint
+		counts     map[uint]int64
+		pushed     []models.Video
+		errFollow  error
+		pushStream bool
+	)
+	pushStream = cacheEnabled()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		following, counts, errFollow = repos.FollowingWithFollowerCounts(followerID)
+	}()
+	go func() {
+		defer wg.Done()
+		if !pushStream {
+			return
+		}
+		if ids, err := timelinePage(followerID, cursor, limit); err == nil && len(ids) > 0 {
+			pushed, _ = loadVideosByIDs(ids)
+		}
+	}()
+	wg.Wait()
+
+	if errFollow != nil {
+		return feedPage{}, errFollow
 	}
 	if len(following) == 0 {
 		return feedPage{Videos: []models.Video{}}, nil
 	}
-
 	// 缓存关闭时没有时间线可用，退回纯拉取
-	if !cacheEnabled() {
+	if !pushStream {
 		return pullFollowingFeed(following, cursor, limit)
 	}
 
 	// 按粉丝数把关注的作者分两组：没超过阈值的已经写进时间线，超过的要实时拉
-	counts, err := repos.CountFollowersByIDs(following)
-	if err != nil {
-		return feedPage{}, err
-	}
 	pullIDs := make([]uint, 0, len(following))
 	for _, id := range following {
 		if int(counts[id]) > fanoutThreshold() {
@@ -73,15 +95,10 @@ func FollowingFeed(followerID, cursor uint, limit int) (feedPage, error) {
 		}
 	}
 
-	// 第一路：时间线里被推来的内容
-	var pushed []models.Video
-	if ids, err := timelinePage(followerID, cursor, limit); err == nil && len(ids) > 0 {
-		pushed, _ = loadVideosByIDs(ids)
-	}
-
-	// 第二路：大 V 的内容实时查
+	// 第二段：大 V 的内容实时查，一次 IN 查询覆盖所有大 V，与人数无关
 	var pulled []models.Video
 	if len(pullIDs) > 0 {
+		var err error
 		pulled, err = repos.FindVideosByAuthorIDs(pullIDs, cursor, limit)
 		if err != nil {
 			return feedPage{}, err

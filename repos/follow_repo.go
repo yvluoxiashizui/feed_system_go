@@ -80,3 +80,28 @@ func FindFollowingVloggerIDs(followerID uint) ([]uint, error) {
 	}
 	return ids, nil
 }
+
+// FollowingWithFollowerCounts 一次查出关注列表和每个作者的粉丝数。
+// 合成一次查询是为了让关注流读取少一次往返：这两份数据都来自 follows 表。
+func FollowingWithFollowerCounts(followerID uint) ([]uint, map[uint]int64, error) {
+	type row struct {
+		VloggerID uint
+		Total     int64
+	}
+	var rows []row
+	err := db.Table("follows AS f").
+		Select("f.vlogger_id AS vlogger_id, (SELECT COUNT(*) FROM follows f2 WHERE f2.vlogger_id = f.vlogger_id) AS total").
+		Where("f.follower_id = ?", followerID).
+		Scan(&rows).Error
+	if err != nil {
+		return nil, nil, err
+	}
+
+	ids := make([]uint, 0, len(rows))
+	counts := make(map[uint]int64, len(rows))
+	for _, r := range rows {
+		ids = append(ids, r.VloggerID)
+		counts[r.VloggerID] = r.Total
+	}
+	return ids, counts, nil
+}
