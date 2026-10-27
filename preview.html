@@ -348,25 +348,102 @@ document.getElementById('logoutBtn').addEventListener('click', function () {
   load(true);
 });
 
+// 文件摘要：浏览器的 WebCrypto 只提供 SHA 系列，用它当上传标识足够
+async function fileDigest(file) {
+  var buf = await file.arrayBuffer();
+  var hash = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hash)).map(function (b) {
+    return b.toString(16).padStart(2, '0');
+  }).join('');
+}
+
+var CHUNK_SIZE = 5 * 1024 * 1024;
+
+async function uploadSimple(file) {
+  var form = new FormData();
+  form.append('file', file);
+  var res = await fetch('/video/upload', {
+    method: 'POST',
+    headers: { 'Authorization': state.token },
+    body: form
+  });
+  var data = await res.json();
+  if (!res.ok) throw new Error(data.error || ('上传失败 ' + res.status));
+  return data.play_url;
+}
+
+// 大文件：摘要当标识 → 问已传分片 → 只补缺的 → 合并
+async function uploadChunked(file, stateEl) {
+  stateEl.textContent = '计算文件摘要…';
+  var digest = await fileDigest(file);
+  var total = Math.ceil(file.size / CHUNK_SIZE);
+
+  var statusRes = await fetch('/video/upload/status?upload_id=' + digest, {
+    headers: { 'Authorization': state.token }
+  });
+  var status = await statusRes.json();
+  var uploaded = new Set(status.received || []);
+
+  var pending = [];
+  for (var i = 0; i < total; i++) { if (!uploaded.has(i)) pending.push(i); }
+  if (uploaded.size > 0) {
+    stateEl.textContent = '续传：已有 ' + uploaded.size + '/' + total + ' 片';
+  }
+
+  var done = uploaded.size;
+  async function uploadOne(i) {
+    var start = i * CHUNK_SIZE;
+    var blob = file.slice(start, Math.min(start + CHUNK_SIZE, file.size));
+    var form = new FormData();
+    form.append('upload_id', digest);
+    form.append('index', String(i));
+    form.append('total', String(total));
+    form.append('file', blob, 'chunk');
+    var res = await fetch('/video/upload/chunk', {
+      method: 'POST',
+      headers: { 'Authorization': state.token },
+      body: form
+    });
+    var data = await res.json();
+    if (!res.ok) throw new Error(data.error || ('分片上传失败 ' + res.status));
+    done++;
+    stateEl.textContent = '上传中 ' + done + '/' + total + ' 片';
+  }
+
+  // 三路并发，别一次把连接打满
+  var queue = pending.slice();
+  async function worker() {
+    while (queue.length) { await uploadOne(queue.shift()); }
+  }
+  await Promise.all([worker(), worker(), worker()]);
+
+  stateEl.textContent = '合并中…';
+  var ext = '.' + (file.name.split('.').pop() || 'mp4').toLowerCase();
+  var res = await fetch('/video/upload/complete', {
+    method: 'POST',
+    headers: { 'Authorization': state.token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ upload_id: digest, total: total, ext: ext })
+  });
+  var data = await res.json();
+  if (!res.ok) throw new Error(data.error || ('合并失败 ' + res.status));
+  return data.play_url;
+}
+
 document.getElementById('videoFile').addEventListener('change', async function () {
   var file = this.files && this.files[0];
   if (!file) return;
   var stateEl = document.getElementById('uploadState');
   if (!state.token) { stateEl.textContent = '上传要先登录'; return; }
 
-  stateEl.textContent = '上传中… ' + Math.round(file.size / 1024) + ' KB';
-  var form = new FormData();
-  form.append('file', file);
+  state.playURL = '';
   try {
-    var res = await fetch('/video/upload', {
-      method: 'POST',
-      headers: { 'Authorization': state.token },
-      body: form
-    });
-    var data = await res.json();
-    if (!res.ok) throw new Error(data.error || ('上传失败 ' + res.status));
-    state.playURL = data.play_url;
-    stateEl.textContent = '已上传：' + data.play_url;
+    if (file.size <= CHUNK_SIZE) {
+      stateEl.textContent = '上传中… ' + Math.round(file.size / 1024) + ' KB';
+      state.playURL = await uploadSimple(file);
+    } else {
+      state.playURL = await uploadChunked(file, stateEl);
+    }
+    stateEl.textContent = '已上传：' + state.playURL;
     say('上传成功，可以发布了', 'ok');
   } catch (e) {
     state.playURL = '';

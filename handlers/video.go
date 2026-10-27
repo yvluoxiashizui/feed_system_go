@@ -168,6 +168,9 @@ func LikesRank(c *gin.Context) {
 // 上传限制：单文件 100MB，只接受这几种容器格式
 const maxUploadBytes = 100 << 20
 
+// 单片上限，前端切成 5MB，留一点余量
+const maxChunkBytes = 6 << 20
+
 var allowedVideoExt = map[string]bool{".mp4": true, ".webm": true, ".mov": true}
 
 // UploadVideo 接收单个视频文件并落盘，返回可直接放进 play_url 的地址。
@@ -191,6 +194,66 @@ func UploadVideo(c *gin.Context) {
 	url, err := services.SaveVideo(file)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "保存失败"})
+		return
+	}
+	c.JSON(200, gin.H{"play_url": url})
+}
+
+// UploadChunk 接收一个分片。前端按 5MB 切片，用整个文件的 MD5 作为上传标识。
+func UploadChunk(c *gin.Context) {
+	uploadID := c.PostForm("upload_id")
+	index, _ := strconv.Atoi(c.PostForm("index"))
+	total, _ := strconv.Atoi(c.PostForm("total"))
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(400, gin.H{"error": "缺少分片"})
+		return
+	}
+	if file.Size > maxChunkBytes {
+		c.JSON(400, gin.H{"error": "分片超过 5MB"})
+		return
+	}
+	if err := services.SaveChunk(uploadID, index, total, file); err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+	received, _ := services.UploadedChunks(uploadID)
+	c.JSON(200, gin.H{"received": len(received)})
+}
+
+// UploadStatus 查询已传分片，用于断点续传
+func UploadStatus(c *gin.Context) {
+	uploadID := c.Query("upload_id")
+	if uploadID == "" {
+		c.JSON(400, gin.H{"error": "缺少上传标识"})
+		return
+	}
+	received, err := services.UploadedChunks(uploadID)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "查询失败"})
+		return
+	}
+	c.JSON(200, gin.H{"received": received})
+}
+
+// CompleteUpload 合并分片，重复调用返回同一个地址
+func CompleteUpload(c *gin.Context) {
+	var input struct {
+		UploadID string `json:"upload_id"`
+		Total    int    `json:"total"`
+		Ext      string `json:"ext"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(400, gin.H{"error": "参数错误"})
+		return
+	}
+	if !allowedVideoExt[strings.ToLower(input.Ext)] {
+		input.Ext = ".mp4"
+	}
+	url, err := services.CompleteUpload(input.UploadID, input.Total, strings.ToLower(input.Ext))
+	if err != nil {
+		c.JSON(400, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(200, gin.H{"play_url": url})

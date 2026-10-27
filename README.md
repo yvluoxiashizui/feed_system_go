@@ -79,7 +79,10 @@ go run ./cmd/worker
 ### 视频
 | 方法 | 路径 | 鉴权 | 说明 |
 |------|------|------|------|
-| POST | `/video/upload` | JWT | 上传单个视频文件（≤100MB，mp4/webm/mov），返回可直接放进 `play_url` 的 `/media/...` 地址 |
+| POST | `/video/upload` | JWT | 小文件直传（≤100MB，mp4/webm/mov），返回可直接放进 `play_url` 的 `/media/...` 地址 |
+| POST | `/video/upload/chunk` | JWT | 上传一个分片（≤5MB），参数 `upload_id`（文件摘要）、`index`、`total` |
+| GET | `/video/upload/status?upload_id=` | JWT | 查询已传分片序号，用于断点续传 |
+| POST | `/video/upload/complete` | JWT | 合并分片，幂等；分片不全时返回 400 |
 | POST | `/video/publish` | JWT | 发布视频（标题 ≤100 字，播放地址 ≤500 字节）；可用 `Idempotency-Key` 头做重复提交幂等 |
 | GET | `/videos?limit=&cursor=` | 可选 | Feed 流列表（游标分页，Redis 缓存最近 500 条 id 窗口，返回 `next_cursor`；带 JWT 时每条带 `is_liked`） |
 | GET | `/video/detail?id=` | 可选 | 视频详情（带 JWT 时返回 `is_liked`） |
@@ -161,7 +164,7 @@ feed/
 │   ├── auth.go          # JWT 鉴权中间件
 │   └── logger.go        # 日志中间件
 ├── preview.html         # 演示页：登录、上传发布、点赞、四种列表与游标翻页
-├── uploads/             # 上传的视频文件（已 gitignore），由 /media 路径提供访问
+├── uploads/             # 上传的视频文件与分片（已 gitignore），由 /media 路径提供访问
 ├── Dockerfile           # 多阶段构建，产出 api 与 worker 两个二进制
 └── docker-compose.yml   # 五个服务一键启动
 ```
