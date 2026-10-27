@@ -18,4 +18,6 @@ type Video struct {
 	// FanoutDone 标记写扩散是否已完成：发布时置为否，扇出成功后置为是。
 	// 用指针区分「没设置过」与「显式置为未完成」，迁移时已有数据按已完成处理。
 	FanoutDone *bool `gorm:"default:1;index" json:"-"`
+	// IsLiked 当前请求用户是否点过赞，只在响应里用，不落库
+	IsLiked bool `gorm:"-" json:"is_liked"`
 }

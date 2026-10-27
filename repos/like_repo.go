@@ -91,3 +91,21 @@ func ListLikedVideoIDs(userID, cursor uint, limit int) ([]uint, int, error) {
 	}
 	return ids, next, nil
 }
+
+// LikedAmong 返回这批视频里该用户点过赞的 id 集合，一次查询覆盖整页
+func LikedAmong(userID uint, videoIDs []uint) (map[uint]bool, error) {
+	liked := make(map[uint]bool, len(videoIDs))
+	if userID == 0 || len(videoIDs) == 0 {
+		return liked, nil
+	}
+	var ids []uint
+	if err := db.Model(&models.Like{}).
+		Where("user_id = ? AND video_id IN ?", userID, videoIDs).
+		Pluck("video_id", &ids).Error; err != nil {
+		return nil, err
+	}
+	for _, id := range ids {
+		liked[id] = true
+	}
+	return liked, nil
+}

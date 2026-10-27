@@ -103,15 +103,45 @@ var feedSingle singleflight.Group
 // ListFeed 游标分页 Feed。
 // 优先走热点窗口缓存：窗口里能切出这一页就直接返回；切不出来（游标落在窗口之外，
 // 或者窗口边界可能截断了真实结果）再回退到数据库，用 id 游标查。
-func ListFeed(cursor uint, limit int) (feedPage, error) {
+func ListFeed(userID, cursor uint, limit int) (feedPage, error) {
+	var (
+		page feedPage
+		err  error
+	)
 	if cacheEnabled() {
-		if ids, err := recentFeedIDs(); err == nil {
-			if page, ok := feedPageFromWindow(ids, cursor, limit); ok {
-				return page, nil
+		if ids, e := recentFeedIDs(); e == nil {
+			if p, ok := feedPageFromWindow(ids, cursor, limit); ok {
+				page = p
 			}
 		}
 	}
-	return loadFeedPage(cursor, limit)
+	if page.Videos == nil && err == nil {
+		page, err = loadFeedPage(cursor, limit)
+	}
+	if err != nil {
+		return feedPage{}, err
+	}
+	markLiked(userID, page.Videos)
+	return page, nil
+}
+
+// markLiked 给这一页视频补上「当前用户是否点过赞」。
+// 游客（userID 为 0）跳过；登录用户用一次 IN 查询覆盖整页，不逐条查。
+func markLiked(userID uint, videos []models.Video) {
+	if userID == 0 || len(videos) == 0 {
+		return
+	}
+	ids := make([]uint, len(videos))
+	for i := range videos {
+		ids[i] = videos[i].ID
+	}
+	liked, err := repos.LikedAmong(userID, ids)
+	if err != nil {
+		return
+	}
+	for i := range videos {
+		videos[i].IsLiked = liked[videos[i].ID]
+	}
 }
 
 // windowSlice 在窗口里切出一页 id。切不出来时返回 false：
@@ -324,7 +354,7 @@ func loadVideosByIDs(ids []uint) ([]models.Video, error) {
 }
 
 // GetVideoDetail 视频详情，走视频对象缓存
-func GetVideoDetail(id uint) (*models.Video, error) {
+func GetVideoDetail(userID, id uint) (*models.Video, error) {
 	videos, err := loadVideosByIDs([]uint{id})
 	if err != nil {
 		return nil, err
@@ -332,6 +362,7 @@ func GetVideoDetail(id uint) (*models.Video, error) {
 	if len(videos) == 0 {
 		return nil, errors.New("视频不存在")
 	}
+	markLiked(userID, videos)
 	return &videos[0], nil
 }
 

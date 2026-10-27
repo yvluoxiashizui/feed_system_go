@@ -52,7 +52,7 @@ func ListVideos(c *gin.Context) {
 	limit := parseLimit(c.DefaultQuery("limit", strconv.Itoa(defaultFeedLimit)))
 	cursor, _ := strconv.ParseUint(c.DefaultQuery("cursor", "0"), 10, 64)
 
-	page, err := services.ListFeed(uint(cursor), limit)
+	page, err := services.ListFeed(currentUID(c), uint(cursor), limit)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "获取失败"})
 		return
@@ -64,7 +64,7 @@ func ListVideos(c *gin.Context) {
 func GetVideoDetail(c *gin.Context) {
 	id, _ := strconv.ParseUint(c.Query("id"), 10, 64)
 
-	video, err := services.GetVideoDetail(uint(id))
+	video, err := services.GetVideoDetail(currentUID(c), uint(id))
 	if err != nil {
 		c.JSON(404, gin.H{"error": "视频不存在"})
 		return
