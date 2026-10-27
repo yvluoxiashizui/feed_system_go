@@ -44,6 +44,7 @@ func main() {
 		userID := c.GetString("user_id")
 		c.JSON(200, gin.H{"message": "已登录", "user_id": userID})
 	})
+	r.POST("/video/upload", handlers.Auth, handlers.RateLimit("upload", handlers.PublishRate, handlers.PublishBurst), handlers.UploadVideo)
 	r.POST("/video/publish", handlers.Auth, handlers.RateLimit("publish", handlers.PublishRate, handlers.PublishBurst), handlers.PublishVideo)
 	r.GET("/videos", handlers.SoftAuth, handlers.ListVideos)
 	r.GET("/video/detail", handlers.SoftAuth, handlers.GetVideoDetail)
@@ -60,7 +61,12 @@ func main() {
 	r.POST("/comment/publish", handlers.Auth, handlers.PublishComment)
 	r.GET("/comment/list", handlers.ListComments)
 
-	// Feed 预览页
+	// 演示页与上传的视频文件；上传目录可用 FEED_UPLOAD_DIR 覆盖
+	uploadDir := services.UploadDir()
+	if err := os.MkdirAll(uploadDir, 0o755); err != nil {
+		log.Println("创建上传目录失败:", err)
+	}
+	r.Static("/media", uploadDir)
 	r.StaticFile("/", "preview.html")
 
 	srv := &http.Server{

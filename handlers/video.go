@@ -1,7 +1,9 @@
 package handlers
 
 import (
+	"path"
 	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -161,4 +163,35 @@ func LikesRank(c *gin.Context) {
 		return
 	}
 	c.JSON(200, page)
+}
+
+// 上传限制：单文件 100MB，只接受这几种容器格式
+const maxUploadBytes = 100 << 20
+
+var allowedVideoExt = map[string]bool{".mp4": true, ".webm": true, ".mov": true}
+
+// UploadVideo 接收单个视频文件并落盘，返回可直接放进 play_url 的地址。
+// 只做单文件直传，分片与断点续传属于另一条链路，这里不掺进来。
+func UploadVideo(c *gin.Context) {
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(400, gin.H{"error": "缺少文件"})
+		return
+	}
+	if file.Size > maxUploadBytes {
+		c.JSON(400, gin.H{"error": "文件超过 100MB"})
+		return
+	}
+	ext := strings.ToLower(path.Ext(file.Filename))
+	if !allowedVideoExt[ext] {
+		c.JSON(400, gin.H{"error": "只接受 mp4、webm、mov"})
+		return
+	}
+
+	url, err := services.SaveVideo(file)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "保存失败"})
+		return
+	}
+	c.JSON(200, gin.H{"play_url": url})
 }

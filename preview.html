@@ -41,6 +41,7 @@
   .meta { color: #8a919b; font-size: 13px; margin-bottom: 6px; }
   .url { color: #6366f1; font-size: 12px; word-break: break-all; }
   .card-foot { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+  .player { width: 100%; max-height: 320px; border-radius: 8px; background: #000; margin: 6px 0; }
   .like {
     background: #fff; color: #ef4444; border: 1px solid #fecaca;
     border-radius: 999px; padding: 4px 12px; font-size: 13px; cursor: pointer;
@@ -82,8 +83,11 @@
   <div class="panel" id="publishPanel" style="display:none">
     <div class="row">
       <input id="videoTitle" placeholder="视频标题">
-      <input id="videoURL" placeholder="播放地址">
+      <input id="videoFile" type="file" accept="video/mp4,video/webm,video/quicktime">
       <button id="publishBtn">发布</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <span class="state" id="uploadState">选一个视频文件，会自动上传</span>
     </div>
     <div class="row" style="margin-top:8px">
       <button id="republishBtn" class="ghost" disabled>用同一个幂等键再发一次</button>
@@ -120,7 +124,8 @@ var state = {
   cursor: 0,      // 最新 / 关注：视频 id 游标
   offset: 0,      // 热榜 / 点赞榜：偏移
   videos: [],
-  lastIdemKey: ''
+  lastIdemKey: '',
+  playURL: ''
 };
 
 var msg = document.getElementById('msg');
@@ -183,7 +188,9 @@ function videoCard(v) {
   return '<div class="card" data-id="' + esc(v.id) + '">' +
     '<div class="title">' + esc(v.title) + '</div>' +
     '<div class="meta">@' + esc(v.username) + ' · 视频 ' + esc(v.id) + '</div>' +
-    '<div class="url">' + esc(v.play_url) + '</div>' +
+    (v.play_url && v.play_url.indexOf('/media/') === 0
+      ? '<video class="player" controls preload="none" src="' + esc(v.play_url) + '"></video>'
+      : '<div class="url">' + esc(v.play_url) + '</div>') +
     '<div class="card-foot">' +
       '<button class="like' + (liked ? ' on' : '') + '" data-like="' + esc(v.id) + '" data-on="' + (liked ? '1' : '0') + '">' +
         (liked ? '❤ 已赞' : '♡ 点赞') + ' ' + esc(v.likes_count) +
@@ -273,8 +280,9 @@ function newIdemKey() {
 
 async function publish(idemKey) {
   var title = document.getElementById('videoTitle').value.trim();
-  var url = document.getElementById('videoURL').value.trim();
-  if (!title || !url) { say('标题和播放地址都要填', 'err'); return; }
+  var url = state.playURL;
+  if (!title) { say('标题不能为空', 'err'); return; }
+  if (!url) { say('先选一个视频文件，等上传完成', 'err'); return; }
   var key = idemKey || newIdemKey();
   say('发布中…');
   try {
@@ -338,6 +346,33 @@ document.getElementById('logoutBtn').addEventListener('click', function () {
   logout();
   say('已退出，现在是游客');
   load(true);
+});
+
+document.getElementById('videoFile').addEventListener('change', async function () {
+  var file = this.files && this.files[0];
+  if (!file) return;
+  var stateEl = document.getElementById('uploadState');
+  if (!state.token) { stateEl.textContent = '上传要先登录'; return; }
+
+  stateEl.textContent = '上传中… ' + Math.round(file.size / 1024) + ' KB';
+  var form = new FormData();
+  form.append('file', file);
+  try {
+    var res = await fetch('/video/upload', {
+      method: 'POST',
+      headers: { 'Authorization': state.token },
+      body: form
+    });
+    var data = await res.json();
+    if (!res.ok) throw new Error(data.error || ('上传失败 ' + res.status));
+    state.playURL = data.play_url;
+    stateEl.textContent = '已上传：' + data.play_url;
+    say('上传成功，可以发布了', 'ok');
+  } catch (e) {
+    state.playURL = '';
+    stateEl.textContent = '上传失败：' + e.message;
+    say(e.message, 'err');
+  }
 });
 
 document.getElementById('publishBtn').addEventListener('click', function () { publish(''); });
