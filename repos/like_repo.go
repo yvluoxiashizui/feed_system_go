@@ -48,10 +48,10 @@ func UnlikeAndDecrement(userID, videoID uint) (bool, error) {
 			return nil
 		}
 		removed = true
-		// 条件里带 likes_count > 0 兜底，历史脏数据也不会被减成负数
+		// 两道防线：条件挡住计数已经是 0 的无效写，GREATEST 保证任何情况下都不会减成负数
 		return tx.Model(&models.Video{}).
 			Where("id = ? AND likes_count > 0", videoID).
-			UpdateColumn("likes_count", gorm.Expr("likes_count - 1")).Error
+			UpdateColumn("likes_count", gorm.Expr("GREATEST(likes_count - 1, 0)")).Error
 	})
 	if err != nil {
 		return false, err
