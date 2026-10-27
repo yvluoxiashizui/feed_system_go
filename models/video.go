@@ -15,4 +15,7 @@ type Video struct {
 	CreateTime  time.Time `gorm:"autoCreateTime" json:"create_time"`
 	// 点赞榜按 (likes_count, id) 排序，联合索引让这条排序直接走索引，不需要额外排序
 	LikesCount int64 `gorm:"default:0;index:idx_likes_count_id,priority:1" json:"likes_count"`
+	// FanoutDone 标记写扩散是否已完成：发布时置为否，扇出成功后置为是。
+	// 用指针区分「没设置过」与「显式置为未完成」，迁移时已有数据按已完成处理。
+	FanoutDone *bool `gorm:"default:1;index" json:"-"`
 }

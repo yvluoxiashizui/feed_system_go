@@ -13,6 +13,13 @@ import (
 func main() {
 	bootstrap.OpenDB()
 	bootstrap.OpenRedis()
+
+	// 补投需要一条投递连接，连不上时先跳过，消费照常进行
+	if err := services.SetupFanoutPublisher(); err != nil {
+		log.Println("扇出补投暂时不可用:", err)
+	}
+	go services.StartFanoutSweeper()
+
 	log.Println("写扩散消费者启动")
 
 	for {

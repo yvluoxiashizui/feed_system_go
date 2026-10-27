@@ -6,9 +6,27 @@ import (
 	"feed/models"
 )
 
-// CreateVideo 创建视频
+// CreateVideo 创建视频。新视频默认未完成写扩散，由消费者或补扫任务处理
 func CreateVideo(v *models.Video) error {
+	if v.FanoutDone == nil {
+		notDone := false
+		v.FanoutDone = &notDone
+	}
 	return db.Create(v).Error
+}
+
+// MarkFanoutDone 标记这条视频的写扩散已经完成，补扫任务不再重投
+func MarkFanoutDone(videoID uint) error {
+	return db.Model(&models.Video{}).Where("id = ?", videoID).Update("fanout_done", true).Error
+}
+
+// ListPendingFanout 查出发布超过指定秒数仍未完成写扩散的视频，用于补投。
+// 时间比较交给数据库时钟，避免应用与数据库时区不一致时判定失效。
+func ListPendingFanout(delaySeconds int, limit int) ([]models.Video, error) {
+	var videos []models.Video
+	err := db.Where("fanout_done = ? AND create_time < DATE_SUB(NOW(), INTERVAL ? SECOND)", false, delaySeconds).
+		Order("id").Limit(limit).Find(&videos).Error
+	return videos, err
 }
 
 // ListVideosByCursor 游标分页查视频，最新在前

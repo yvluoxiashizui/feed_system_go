@@ -1,6 +1,7 @@
 package services
 
 import (
+	"log"
 	"os"
 	"strconv"
 	"time"
@@ -36,24 +37,29 @@ func timelineKey(userID uint) string {
 // fanoutVideo 发布时把视频写进粉丝的时间线；粉丝数超过阈值的作者跳过。
 // 返回错误表示这次扇出没有完成，调用方据此重试，而不是当作已完成。
 func fanoutVideo(authorID, videoID uint) error {
+	// 缓存关闭时不做扩散，直接标记完成，避免补扫反复重投
 	if !cacheEnabled() {
-		return nil
+		return repos.MarkFanoutDone(videoID)
 	}
 	count, err := repos.CountFollowers(authorID)
 	if err != nil {
 		return err
 	}
+	// 没有粉丝、或粉丝数超过阈值走读时聚合，这两种情况本来就不推，同样标记完成
 	if count == 0 || int(count) > fanoutThreshold() {
-		return nil
+		return repos.MarkFanoutDone(videoID)
 	}
 	followerIDs, err := repos.FindFollowerIDs(authorID)
 	if err != nil {
 		return err
 	}
 	if len(followerIDs) == 0 {
-		return nil
+		return repos.MarkFanoutDone(videoID)
 	}
-	return pushToTimelines(followerIDs, []uint{videoID})
+	if err := pushToTimelines(followerIDs, []uint{videoID}); err != nil {
+		return err
+	}
+	return repos.MarkFanoutDone(videoID)
 }
 
 // backfillTimeline 关注时把对方最近的视频写进我的时间线，避免只看到关注之后的内容
@@ -126,4 +132,36 @@ func timelinePage(userID, cursor uint, limit int) ([]uint, error) {
 		ids = append(ids, uint(n))
 	}
 	return ids, nil
+}
+
+// 补扫参数：每 30 秒扫一次发布超过 2 分钟仍未完成扇出的视频
+const (
+	fanoutSweepInterval = 30 * time.Second
+	fanoutPendingAfter  = 2 * time.Minute
+	fanoutSweepBatch    = 100
+)
+
+// StartFanoutSweeper 定期补投未完成写扩散的视频。
+// 发布是「写库、删缓存、投消息」三步，投递失败能退回同步扇出，
+// 但进程在写库之后、投递之前崩溃时消息就发不出去，这个循环负责把这类记录补上。
+func StartFanoutSweeper() {
+	ticker := time.NewTicker(fanoutSweepInterval)
+	defer ticker.Stop()
+	for range ticker.C {
+		if !mqReady {
+			continue
+		}
+		videos, err := repos.ListPendingFanout(int(fanoutPendingAfter.Seconds()), fanoutSweepBatch)
+		if err != nil {
+			log.Println("补扫待扇出视频失败:", err)
+			continue
+		}
+		for _, v := range videos {
+			if err := publishFanout(v.AuthorID, v.ID); err != nil {
+				log.Println("补投扇出消息失败:", err)
+				break
+			}
+			log.Printf("补投扇出: video=%d author=%d", v.ID, v.AuthorID)
+		}
+	}
 }
