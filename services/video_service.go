@@ -196,6 +196,10 @@ func rebuildFeedWindow() ([]uint, error) {
 	if ok {
 		defer release()
 
+		// 抢到锁之后再确认一次：等锁期间别的实例可能刚写完，这时不必重复查库
+		if ids, ok := readFeedWindow(); ok {
+			return ids, nil
+		}
 		ids, err := repos.ListRecentVideoIDs(feedWindowSize)
 		if err != nil {
 			return nil, err
