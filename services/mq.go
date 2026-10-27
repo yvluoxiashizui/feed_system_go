@@ -1,10 +1,12 @@
 package services
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
 	"os"
+	"sync"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -21,6 +23,9 @@ const (
 	fanoutRetryLimit   = 3
 	fanoutRetryDelayMS = 5000
 	fanoutRetryHeader  = "x-retry"
+
+	// 发布确认的最长等待时间，超时按投递失败处理，由调用方退回同步扇出
+	fanoutConfirmTimeout = 2 * time.Second
 )
 
 // fanoutTask 一条扇出任务：把某个视频写进作者的粉丝时间线
@@ -41,6 +46,10 @@ var (
 	mqConn  *amqp.Connection
 	mqChan  *amqp.Channel
 	mqReady bool
+
+	// mqMu 保护上面三个变量；重连进行中时 reconnecting 为 true，避免并发重复建连
+	mqMu         sync.RWMutex
+	reconnecting bool
 )
 
 // declareFanoutQueues 声明业务队列、重试队列与死信队列。
@@ -82,26 +91,52 @@ func SetupFanoutPublisher() error {
 		conn.Close()
 		return err
 	}
+	// 开启发布确认：只有 Broker 确认收到并落盘，投递才算成功
+	if err := ch.Confirm(false); err != nil {
+		conn.Close()
+		return err
+	}
 
+	mqMu.Lock()
 	mqConn, mqChan, mqReady = conn, ch, true
+	reconnecting = false
+	mqMu.Unlock()
 	return nil
 }
 
 // publishFanout 投递一条扇出任务；未就绪或投递失败时返回错误，调用方退回同步扇出
 func publishFanout(authorID, videoID uint) error {
-	if !mqReady {
+	ch, ready := currentPublisher()
+	if !ready {
+		schedulePublisherReconnect()
 		return errors.New("消息队列未就绪")
 	}
 	body, err := json.Marshal(fanoutTask{VideoID: videoID, AuthorID: authorID})
 	if err != nil {
 		return err
 	}
-	return mqChan.Publish("", fanoutQueue, false, false, amqp.Publishing{
+	confirmation, err := ch.PublishWithDeferredConfirmWithContext(context.Background(), "", fanoutQueue, false, false, amqp.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Persistent,
 		Timestamp:    time.Now(),
 		Body:         body,
 	})
+	if err != nil {
+		schedulePublisherReconnect()
+		return err
+	}
+
+	confirmCtx, cancel := context.WithTimeout(context.Background(), fanoutConfirmTimeout)
+	defer cancel()
+	acked, err := confirmation.WaitContext(confirmCtx)
+	if err != nil {
+		schedulePublisherReconnect()
+		return err
+	}
+	if !acked {
+		return errors.New("Broker 拒绝接收扇出消息")
+	}
+	return nil
 }
 
 // ConsumeFanout 以阻塞方式消费扇出任务，供 Worker 进程使用。
@@ -192,4 +227,37 @@ func retryFanout(ch *amqp.Channel, d amqp.Delivery, cause error) (ok bool, err e
 		return false, err
 	}
 	return true, nil
+}
+
+// currentPublisher 取当前投递通道；未就绪时返回 false
+func currentPublisher() (*amqp.Channel, bool) {
+	mqMu.RLock()
+	defer mqMu.RUnlock()
+	return mqChan, mqReady
+}
+
+// schedulePublisherReconnect 投递失败后异步重建连接，下一次投递就能重新走异步。
+// 同一时刻只允许一个重建过程，消息队列仍然不可用时不会反复建连。
+func schedulePublisherReconnect() {
+	mqMu.Lock()
+	if reconnecting {
+		mqMu.Unlock()
+		return
+	}
+	mqReady = false
+	reconnecting = true
+	mqMu.Unlock()
+
+	go func() {
+		for i := 0; i < 3; i++ {
+			if err := SetupFanoutPublisher(); err == nil {
+				log.Println("扇出投递连接已重建")
+				return
+			}
+			time.Sleep(time.Second)
+		}
+		mqMu.Lock()
+		reconnecting = false
+		mqMu.Unlock()
+	}()
 }
