@@ -33,6 +33,9 @@ type feedPage struct {
 	NextCursor int            `json:"next_cursor"`
 }
 
+// 幂等键长度上限，够放 UUID 和常见客户端生成的键
+const maxIdemKeyLength = 64
+
 // 视频标题与播放地址的上限
 const (
 	maxVideoTitleLength = 100
@@ -40,9 +43,10 @@ const (
 )
 
 // PublishVideo 发布视频：标题和播放地址不能为空，并按字符数限制长度
-func PublishVideo(userID uint, title, playURL string) (*models.Video, error) {
+func PublishVideo(userID uint, title, playURL, idemKey string) (*models.Video, error) {
 	title = strings.TrimSpace(title)
 	playURL = strings.TrimSpace(playURL)
+	idemKey = strings.TrimSpace(idemKey)
 
 	if title == "" {
 		return nil, errors.New("标题不能为空")
@@ -56,13 +60,27 @@ func PublishVideo(userID uint, title, playURL string) (*models.Video, error) {
 	if len(playURL) > maxPlayURLLength {
 		return nil, errors.New("播放地址过长")
 	}
+	if len(idemKey) > maxIdemKeyLength {
+		return nil, errors.New("幂等键过长")
+	}
 
 	author, err := repos.FindUserByID(userID)
 	if err != nil {
 		return nil, errors.New("用户不存在")
 	}
 	v := &models.Video{AuthorID: author.ID, Username: author.Username, Title: title, PlayURL: playURL}
+	if idemKey != "" {
+		v.IdemKey = &idemKey
+	}
 	if err := repos.CreateVideo(v); err != nil {
+		// 幂等键撞唯一索引说明这次是重复提交：返回第一次创建的那条，后续副作用不再执行
+		if idemKey != "" && repos.IsDuplicateKey(err) {
+			existing, findErr := repos.FindVideoByAuthorAndIdemKey(author.ID, idemKey)
+			if findErr != nil {
+				return nil, findErr
+			}
+			return existing, nil
+		}
 		return nil, err
 	}
 

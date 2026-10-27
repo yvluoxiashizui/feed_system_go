@@ -6,7 +6,7 @@ import "time"
 type Video struct {
 	// 主键同时作为点赞榜联合索引的第二列，用于同分时按 id 倒序定位
 	ID          uint      `gorm:"primaryKey;index:idx_likes_count_id,priority:2" json:"id"`
-	AuthorID    uint      `gorm:"index" json:"author_id"`
+	AuthorID    uint      `gorm:"index;uniqueIndex:uk_author_idem,priority:1" json:"author_id"`
 	Username    string    `json:"username"`
 	Title       string    `json:"title"`
 	Description string    `json:"description,omitempty"`
@@ -20,4 +20,7 @@ type Video struct {
 	FanoutDone *bool `gorm:"default:1;index" json:"-"`
 	// IsLiked 当前请求用户是否点过赞，只在响应里用，不落库
 	IsLiked bool `gorm:"-" json:"is_liked"`
+	// IdemKey 发布请求的幂等键，同一个作者重复提交时由联合唯一索引挡住；
+	// 用指针是为了让不带幂等键的记录存 NULL，不参与唯一性约束。
+	IdemKey *string `gorm:"size:64;uniqueIndex:uk_author_idem,priority:2" json:"-"`
 }

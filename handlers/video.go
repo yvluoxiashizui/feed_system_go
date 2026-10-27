@@ -21,7 +21,8 @@ func PublishVideo(c *gin.Context) {
 		return
 	}
 
-	video, err := services.PublishVideo(uint(uid), input.Title, input.PlayURL)
+	// 客户端可用 Idempotency-Key 头声明这次请求的幂等键，重复提交返回第一次的结果
+	video, err := services.PublishVideo(uint(uid), input.Title, input.PlayURL, c.GetHeader("Idempotency-Key"))
 	if err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
 		return

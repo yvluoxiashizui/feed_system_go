@@ -9,8 +9,8 @@ import (
 	"feed/models"
 )
 
-// isDuplicateKey 判断是否为唯一键冲突（MySQL 1062）
-func isDuplicateKey(err error) bool {
+// IsDuplicateKey 判断是否为唯一键冲突（MySQL 1062）
+func IsDuplicateKey(err error) bool {
 	var me *mysql.MySQLError
 	return errors.As(err, &me) && me.Number == 1062
 }
@@ -21,7 +21,7 @@ func LikeAndIncrement(userID, videoID uint) (duplicated bool, err error) {
 	err = db.Transaction(func(tx *gorm.DB) error {
 		like := &models.Like{UserID: userID, VideoID: videoID}
 		if e := tx.Create(like).Error; e != nil {
-			if isDuplicateKey(e) {
+			if IsDuplicateKey(e) {
 				duplicated = true
 				return nil
 			}

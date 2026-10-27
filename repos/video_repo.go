@@ -130,3 +130,13 @@ func FindVideosByAuthorIDs(authorIDs []uint, cursor uint, limit int) ([]models.V
 	}
 	return videos, nil
 }
+
+// FindVideoByAuthorAndIdemKey 按幂等键找已经创建过的视频，重复提交时直接返回它
+func FindVideoByAuthorAndIdemKey(authorID uint, idemKey string) (*models.Video, error) {
+	var v models.Video
+	err := db.Where("author_id = ? AND idem_key = ?", authorID, idemKey).First(&v).Error
+	if err != nil {
+		return nil, err
+	}
+	return &v, nil
+}

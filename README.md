@@ -79,7 +79,7 @@ go run ./cmd/worker
 ### 视频
 | 方法 | 路径 | 鉴权 | 说明 |
 |------|------|------|------|
-| POST | `/video/publish` | JWT | 发布视频（标题 ≤100 字，播放地址 ≤500 字节） |
+| POST | `/video/publish` | JWT | 发布视频（标题 ≤100 字，播放地址 ≤500 字节）；可用 `Idempotency-Key` 头做重复提交幂等 |
 | GET | `/videos?limit=&cursor=` | 可选 | Feed 流列表（游标分页，Redis 缓存最近 500 条 id 窗口，返回 `next_cursor`；带 JWT 时每条带 `is_liked`） |
 | GET | `/video/detail?id=` | 可选 | 视频详情（带 JWT 时返回 `is_liked`） |
 
