@@ -139,9 +139,13 @@ func publishFanout(authorID, videoID uint) error {
 	return nil
 }
 
+// 消费者的标签，停止时用它取消订阅
+const fanoutConsumerTag = "feed-fanout-worker"
+
 // ConsumeFanout 以阻塞方式消费扇出任务，供 Worker 进程使用。
-// 连接断开时返回，由调用方重连；消息格式错误直接进死信，业务处理本身可重入。
-func ConsumeFanout() error {
+// 收到 stop 信号时取消订阅：不再投递新消息，手上这条处理完并确认之后循环自然结束。
+// 连接断开时直接返回，由调用方重连；消息格式错误进死信，业务处理本身可重入。
+func ConsumeFanout(stop <-chan struct{}) error {
 	conn, err := amqp.Dial(mqAddr())
 	if err != nil {
 		return err
@@ -156,10 +160,21 @@ func ConsumeFanout() error {
 		return err
 	}
 
-	deliveries, err := ch.Consume(fanoutQueue, "feed-fanout-worker", false, false, false, false, nil)
+	deliveries, err := ch.Consume(fanoutQueue, fanoutConsumerTag, false, false, false, false, nil)
 	if err != nil {
 		return err
 	}
+
+	// 收到停止信号后取消订阅，正在处理的那条不受影响，处理完自然退出循环
+	stopped := make(chan struct{})
+	go func() {
+		select {
+		case <-stop:
+			_ = ch.Cancel(fanoutConsumerTag, false)
+		case <-stopped:
+		}
+	}()
+	defer close(stopped)
 
 	for d := range deliveries {
 		var task fanoutTask

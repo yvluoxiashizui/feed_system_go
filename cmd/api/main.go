@@ -1,7 +1,13 @@
 package main
 
 import (
+	"context"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -10,6 +16,9 @@ import (
 	"feed/models"
 	"feed/services"
 )
+
+// shutdownTimeout 停机时等待在途请求的最长时间
+const shutdownTimeout = 5 * time.Second
 
 func main() {
 	db := bootstrap.OpenDB()
@@ -54,7 +63,28 @@ func main() {
 	// Feed 预览页
 	r.StaticFile("/", "preview.html")
 
-	if err := r.Run(bootstrap.Env("FEED_HTTP_ADDR", ":8080")); err != nil {
-		log.Fatal("启动服务失败: ", err)
+	srv := &http.Server{
+		Addr:    bootstrap.Env("FEED_HTTP_ADDR", ":8080"),
+		Handler: r,
 	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal("启动服务失败: ", err)
+		}
+	}()
+	log.Println("服务已启动:", srv.Addr)
+
+	// 收到退出信号后先停止接收新请求，再等在途请求结束
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Println("收到退出信号，停止接收新请求")
+
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Println("等待在途请求超时:", err)
+	}
+	log.Println("服务已退出")
 }
