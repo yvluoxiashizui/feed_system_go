@@ -3,49 +3,358 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>📹 短视频 Feed 流</title>
+<title>📹 短视频 Feed 流 演示页</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: "Microsoft YaHei", sans-serif; background: #f5f5f5; padding: 20px; max-width: 600px; margin: 0 auto; }
-  h1 { text-align: center; margin-bottom: 20px; }
-  .card { background: #fff; border-radius: 12px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
-  .title { font-size: 17px; font-weight: bold; margin-bottom: 6px; }
-  .meta { color: #888; font-size: 13px; margin-bottom: 6px; }
-  .url { color: #6366f1; font-size: 13px; word-break: break-all; }
-  .empty { text-align: center; color: #aaa; padding: 40px; }
+  body {
+    font-family: "Microsoft YaHei", -apple-system, sans-serif;
+    background: #f5f6f8; color: #1f2328;
+    max-width: 720px; margin: 0 auto; padding: 16px 16px 48px;
+  }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: #8a919b; font-size: 13px; margin-bottom: 16px; }
+  .panel {
+    background: #fff; border-radius: 10px; padding: 12px 14px;
+    margin-bottom: 12px; box-shadow: 0 1px 4px rgba(0,0,0,.05);
+  }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  input, button, select {
+    font: inherit; font-size: 14px;
+    border: 1px solid #dfe3e8; border-radius: 8px;
+    padding: 7px 10px; background: #fff; color: inherit;
+  }
+  input { flex: 1; min-width: 120px; }
+  button { cursor: pointer; background: #6366f1; color: #fff; border-color: #6366f1; }
+  button.ghost { background: #fff; color: #4b5563; border-color: #dfe3e8; }
+  button:disabled { opacity: .5; cursor: default; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  .tab {
+    padding: 6px 12px; border-radius: 999px; font-size: 14px;
+    background: #fff; color: #4b5563; border: 1px solid #dfe3e8; cursor: pointer;
+  }
+  .tab.active { background: #6366f1; color: #fff; border-color: #6366f1; }
+  .card {
+    background: #fff; border-radius: 10px; padding: 12px 14px;
+    margin-bottom: 10px; box-shadow: 0 1px 4px rgba(0,0,0,.05);
+  }
+  .title { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+  .meta { color: #8a919b; font-size: 13px; margin-bottom: 6px; }
+  .url { color: #6366f1; font-size: 12px; word-break: break-all; }
+  .card-foot { display: flex; gap: 10px; align-items: center; margin-top: 8px; }
+  .like {
+    background: #fff; color: #ef4444; border: 1px solid #fecaca;
+    border-radius: 999px; padding: 4px 12px; font-size: 13px; cursor: pointer;
+  }
+  .like.on { background: #ef4444; color: #fff; border-color: #ef4444; }
+  .state { color: #8a919b; font-size: 13px; }
+  .empty { text-align: center; color: #a1a7b0; padding: 32px 0; }
+  .msg { font-size: 13px; padding: 8px 0; min-height: 20px; }
+  .msg.err { color: #dc2626; }
+  .msg.ok { color: #16a34a; }
+  .who { font-size: 14px; color: #4b5563; }
+  .hint { color: #a1a7b0; font-size: 12px; margin-top: 6px; }
 </style>
 </head>
 <body>
-  <h1>📹 短视频 Feed 流</h1>
+  <h1>📹 短视频 Feed 流 演示页</h1>
+  <div class="sub">同一个后端，四种列表、点赞、发布、幂等重发</div>
+
+  <div class="panel" id="authPanel">
+    <div class="row">
+      <input id="username" placeholder="用户名" autocomplete="username">
+      <input id="password" type="password" placeholder="密码" autocomplete="current-password">
+      <button id="loginBtn">登录</button>
+      <button id="registerBtn" class="ghost">注册</button>
+    </div>
+    <div class="hint">未登录也能刷 Feed，只是看不到「我赞过」的标记。</div>
+  </div>
+
+  <div class="panel" id="userPanel" style="display:none">
+    <div class="row">
+      <span class="who" id="whoami"></span>
+      <span style="flex:1"></span>
+      <input id="followID" placeholder="作者 id" style="max-width:110px">
+      <button id="followBtn" class="ghost">关注</button>
+      <button id="logoutBtn" class="ghost">退出</button>
+    </div>
+  </div>
+
+  <div class="panel" id="publishPanel" style="display:none">
+    <div class="row">
+      <input id="videoTitle" placeholder="视频标题">
+      <input id="videoURL" placeholder="播放地址">
+      <button id="publishBtn">发布</button>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="republishBtn" class="ghost" disabled>用同一个幂等键再发一次</button>
+      <span class="state" id="publishState"></span>
+    </div>
+    <div class="hint">发布带 Idempotency-Key 头；再发一次会返回同一个视频 id，不会重复创建。</div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="latest">最新</div>
+    <div class="tab" data-tab="following">关注</div>
+    <div class="tab" data-tab="hot">热榜</div>
+    <div class="tab" data-tab="likes">点赞榜</div>
+  </div>
+
+  <div class="msg" id="msg"></div>
   <div id="list"><div class="empty">加载中...</div></div>
+  <div class="row" style="justify-content:center; margin-top:12px">
+    <button id="moreBtn" class="ghost" style="display:none">加载更多</button>
+  </div>
 
 <script>
-// 转义用户可控字段，避免标题或播放地址里带标签被当作 HTML 执行
+// 所有用户可控字段先转义，避免标题里带标签被当成 HTML 执行
 function esc(s) {
   return String(s === null || s === undefined ? '' : s).replace(/[&<>"']/g, function (ch) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
   });
 }
 
-fetch('/videos')
-  .then(r => r.json())
-  .then(data => {
-    const list = document.getElementById('list');
-    const videos = data.videos || [];
-    if (!videos.length) {
-      list.innerHTML = '<div class="empty">还没有视频，去发一个吧～</div>';
-      return;
+var state = {
+  token: localStorage.getItem('feed_token') || '',
+  username: localStorage.getItem('feed_user') || '',
+  tab: 'latest',
+  cursor: 0,      // 最新 / 关注：视频 id 游标
+  offset: 0,      // 热榜 / 点赞榜：偏移
+  videos: [],
+  lastIdemKey: ''
+};
+
+var msg = document.getElementById('msg');
+
+function say(text, kind) {
+  msg.className = 'msg' + (kind ? ' ' + kind : '');
+  msg.textContent = text || '';
+}
+
+// 统一请求：带 token、解析错误信息
+async function api(path, options) {
+  options = options || {};
+  options.headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
+  if (state.token) {
+    options.headers['Authorization'] = state.token;
+  }
+  var res = await fetch(path, options);
+  var text = await res.text();
+  var data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (e) { data = { raw: text }; }
+
+  if (res.status === 401) {
+    logout();
+    throw new Error('登录失效，请重新登录');
+  }
+  if (res.status === 429) {
+    throw new Error('被限流了，等几秒再试');
+  }
+  if (!res.ok) {
+    throw new Error((data && data.error) || ('请求失败 ' + res.status));
+  }
+  return data;
+}
+
+function setAuth(token, username) {
+  state.token = token || '';
+  state.username = username || '';
+  if (token) {
+    localStorage.setItem('feed_token', token);
+    localStorage.setItem('feed_user', username);
+  } else {
+    localStorage.removeItem('feed_token');
+    localStorage.removeItem('feed_user');
+  }
+  renderAuth();
+}
+
+function logout() { setAuth('', ''); }
+
+function renderAuth() {
+  var logged = !!state.token;
+  document.getElementById('authPanel').style.display = logged ? 'none' : 'block';
+  document.getElementById('userPanel').style.display = logged ? 'block' : 'none';
+  document.getElementById('publishPanel').style.display = logged ? 'block' : 'none';
+  document.getElementById('whoami').textContent = logged ? ('已登录：' + state.username) : '';
+}
+
+function videoCard(v) {
+  var liked = !!v.is_liked;
+  return '<div class="card" data-id="' + esc(v.id) + '">' +
+    '<div class="title">' + esc(v.title) + '</div>' +
+    '<div class="meta">@' + esc(v.username) + ' · 视频 ' + esc(v.id) + '</div>' +
+    '<div class="url">' + esc(v.play_url) + '</div>' +
+    '<div class="card-foot">' +
+      '<button class="like' + (liked ? ' on' : '') + '" data-like="' + esc(v.id) + '" data-on="' + (liked ? '1' : '0') + '">' +
+        (liked ? '❤ 已赞' : '♡ 点赞') + ' ' + esc(v.likes_count) +
+      '</button>' +
+      '<span class="state">' + (liked ? 'is_liked=true' : 'is_liked=false') + '</span>' +
+    '</div>' +
+  '</div>';
+}
+
+function render(withAppend) {
+  var list = document.getElementById('list');
+  if (!state.videos.length) {
+    list.innerHTML = '<div class="empty">这里还没有内容</div>';
+  } else {
+    list.innerHTML = state.videos.map(videoCard).join('');
+  }
+  document.getElementById('moreBtn').style.display =
+    (state.tab === 'latest' || state.tab === 'following') ? 'inline-block' : 'none';
+  document.getElementById('moreBtn').disabled = false;
+  if (withAppend) { list.scrollIntoView({ block: 'end', behavior: 'smooth' }); }
+}
+
+async function load(reset) {
+  if (reset) { state.cursor = 0; state.offset = 0; state.videos = []; }
+  var limit = 10;
+  var path;
+  if (state.tab === 'latest') {
+    path = '/videos?limit=' + limit + '&cursor=' + (state.cursor || 0);
+  } else if (state.tab === 'following') {
+    path = '/feed/following?limit=' + limit + '&cursor=' + (state.cursor || 0);
+  } else if (state.tab === 'hot') {
+    path = '/feed/hot?limit=' + limit + '&offset=' + (state.offset || 0);
+  } else {
+    path = '/feed/likes-rank?limit=' + limit + '&cursor=' + encodeURIComponent(state.cursor || '');
+  }
+
+  say('加载中…');
+  try {
+    var data = await api(path);
+    // 热榜返回的是数组，其余返回 {videos, next_cursor}
+    var page = Array.isArray(data) ? { videos: data } : data;
+    var videos = page.videos || [];
+    state.videos = (state.offset || state.cursor) ? state.videos.concat(videos) : videos;
+
+    if (state.tab === 'latest' || state.tab === 'following') {
+      state.cursor = page.next_cursor || 0;
+    } else if (state.tab === 'hot') {
+      state.offset = (state.offset || 0) + videos.length;
+    } else {
+      state.cursor = page.next_cursor || '';
     }
-    list.innerHTML = videos.map(v => `
-      <div class="card">
-        <div class="title">${esc(v.title)}</div>
-        <div class="meta">@${esc(v.username)} · 点赞 ${esc(v.likes_count)}</div>
-        <div class="url">${esc(v.play_url)}</div>
-      </div>`).join('') + '<div class="meta" style="text-align:center">— 到底了 —</div>';
-  })
-  .catch(e => {
-    document.getElementById('list').innerHTML = '<div class="empty">加载失败，后端启动了吗？</div>';
+    render();
+    say(videos.length ? '' : '没有更多了');
+  } catch (e) {
+    say(e.message, 'err');
+  }
+}
+
+async function toggleLike(btn) {
+  var id = btn.getAttribute('data-like');
+  var on = btn.getAttribute('data-on') === '1';
+  if (!state.token) { say('点赞要先登录', 'err'); return; }
+  btn.disabled = true;
+  try {
+    await api(on ? '/video/unlike' : '/video/like', {
+      method: 'POST',
+      body: JSON.stringify({ video_id: Number(id) })
+    });
+    // 本地更新按钮状态，避免整页重刷
+    btn.setAttribute('data-on', on ? '0' : '1');
+    btn.classList.toggle('on', !on);
+    var count = Number((btn.textContent.match(/\d+/) || [0])[0]) + (on ? -1 : 1);
+    btn.textContent = (on ? '♡ 点赞' : '❤ 已赞') + ' ' + count;
+    btn.parentElement.querySelector('.state').textContent = on ? 'is_liked=false' : 'is_liked=true';
+    say(on ? '已取消点赞' : '已点赞', 'ok');
+  } catch (e) {
+    say(e.message, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function newIdemKey() {
+  if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return 'key-' + Date.now() + '-' + Math.random().toString(16).slice(2);
+}
+
+async function publish(idemKey) {
+  var title = document.getElementById('videoTitle').value.trim();
+  var url = document.getElementById('videoURL').value.trim();
+  if (!title || !url) { say('标题和播放地址都要填', 'err'); return; }
+  var key = idemKey || newIdemKey();
+  say('发布中…');
+  try {
+    var v = await api('/video/publish', {
+      method: 'POST',
+      headers: { 'Idempotency-Key': key },
+      body: JSON.stringify({ title: title, play_url: url })
+    });
+    state.lastIdemKey = key;
+    document.getElementById('republishBtn').disabled = false;
+    document.getElementById('publishState').textContent = '视频 id=' + v.id;
+    say('发布成功，id=' + v.id, 'ok');
+    state.tab = 'latest';
+    syncTabs();
+    load(true);
+  } catch (e) {
+    say(e.message, 'err');
+  }
+}
+
+function syncTabs() {
+  document.querySelectorAll('.tab').forEach(function (el) {
+    el.classList.toggle('active', el.getAttribute('data-tab') === state.tab);
   });
+}
+
+document.querySelectorAll('.tab').forEach(function (el) {
+  el.addEventListener('click', function () {
+    state.tab = el.getAttribute('data-tab');
+    syncTabs();
+    load(true);
+  });
+});
+
+document.getElementById('list').addEventListener('click', function (e) {
+  var btn = e.target.closest('.like');
+  if (btn) toggleLike(btn);
+});
+
+document.getElementById('loginBtn').addEventListener('click', async function () {
+  var u = document.getElementById('username').value.trim();
+  var p = document.getElementById('password').value;
+  try {
+    var data = await api('/login', { method: 'POST', body: JSON.stringify({ username: u, password: p }) });
+    setAuth(data.token, u);
+    say('登录成功', 'ok');
+    load(true);
+  } catch (e) { say(e.message, 'err'); }
+});
+
+document.getElementById('registerBtn').addEventListener('click', async function () {
+  var u = document.getElementById('username').value.trim();
+  var p = document.getElementById('password').value;
+  try {
+    await api('/register', { method: 'POST', body: JSON.stringify({ username: u, password: p }) });
+    say('注册成功，接着点登录', 'ok');
+  } catch (e) { say(e.message, 'err'); }
+});
+
+document.getElementById('logoutBtn').addEventListener('click', function () {
+  logout();
+  say('已退出，现在是游客');
+  load(true);
+});
+
+document.getElementById('publishBtn').addEventListener('click', function () { publish(''); });
+document.getElementById('republishBtn').addEventListener('click', function () { publish(state.lastIdemKey); });
+document.getElementById('moreBtn').addEventListener('click', function () { load(false); });
+
+document.getElementById('followBtn').addEventListener('click', async function () {
+  var id = Number(document.getElementById('followID').value.trim());
+  if (!id) { say('填一个作者 id', 'err'); return; }
+  try {
+    await api('/social/follow', { method: 'POST', body: JSON.stringify({ vlogger_id: id }) });
+    say('已关注 ' + id + '，切到「关注」看看', 'ok');
+  } catch (e) { say(e.message, 'err'); }
+});
+
+renderAuth();
+load(true);
 </script>
 </body>
 </html>

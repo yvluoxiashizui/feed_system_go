@@ -50,8 +50,8 @@ service rabbitmq-server start
 go run ./cmd/api
 go run ./cmd/worker
 
-# 4. 预览页（刷 Feed）
-# 浏览器打开 http://localhost:8080/
+# 4. 演示页（浏览器打开 http://localhost:8080/）
+#    可注册登录、发布视频、点赞、切换最新/关注/热榜/点赞榜四个列表、游标翻页
 ```
 
 常用环境变量：
@@ -159,7 +159,7 @@ feed/
 │   ├── user.go / video.go / follow.go / comment.go
 │   ├── auth.go          # JWT 鉴权中间件
 │   └── logger.go        # 日志中间件
-├── preview.html         # Feed 预览页
+├── preview.html         # 演示页：登录、发布、点赞、四种列表与游标翻页
 ├── Dockerfile           # 多阶段构建，产出 api 与 worker 两个二进制
 └── docker-compose.yml   # 五个服务一键启动
 ```
